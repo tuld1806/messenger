@@ -1,5 +1,6 @@
 const express = require('express');
 const authMiddleware = require('../middlewares/authMiddleware');
+const { loginLimiter } = require('../middlewares/rateLimiter');
 
 function createAuthRouter(authController) {
   const router = express.Router();
@@ -64,7 +65,7 @@ function createAuthRouter(authController) {
    *       400:
    *         description: Sai thông tin đăng nhập
    */
-  router.post('/login', authController.login);
+  router.post('/login', loginLimiter, authController.login);
 
   /**
    * @openapi

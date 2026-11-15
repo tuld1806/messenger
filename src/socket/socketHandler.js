@@ -1,4 +1,5 @@
 const jwt = require('jsonwebtoken');
+const { attachSocketRateLimiter } = require('./socketRateLimiter');
 const JWT_SECRET = process.env.JWT_SECRET || 'super_secret_messenger_key';
 
 // Map to store connected users: userId -> Set of socket.id
@@ -27,6 +28,9 @@ function initSocket(io, messageService) {
   io.on('connection', (socket) => {
     const userId = socket.user.id;
     console.log(`[Socket.IO] User ${socket.user.username} (ID: ${userId}) connected. Socket ID: ${socket.id}`);
+
+    // Giới hạn 5 tin nhắn/giây cho mỗi socket
+    attachSocketRateLimiter(socket);
 
     // Track online user
     if (!onlineUsers.has(userId)) {
