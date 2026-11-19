@@ -64,6 +64,7 @@ class ChatBoxRepository {
           take: 1,
           include: {
             sender: { select: { id: true, username: true, name: true } },
+            attachments: { orderBy: { sortOrder: 'asc' } },
           },
         },
       },

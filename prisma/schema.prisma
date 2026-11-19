@@ -38,15 +38,35 @@ model ChatBox {
 }
 
 model Message {
-  id        Int      @id @default(autoincrement())
-  chatBoxId Int
-  senderId  Int
-  content   String   @db.Text
-  isRead    Boolean  @default(false)
-  createdAt DateTime @default(now())
+  id              Int      @id @default(autoincrement())
+  clientMessageId String?  @unique @db.VarChar(100)
+  chatBoxId       Int
+  senderId        Int
+  content         String   @db.Text
+  mediaUrl        String?
+  isRead          Boolean  @default(false)
+  createdAt       DateTime @default(now())
 
-  chatBox ChatBox @relation(fields: [chatBoxId], references: [id])
-  sender  User    @relation(fields: [senderId], references: [id])
+  chatBox     ChatBox             @relation(fields: [chatBoxId], references: [id])
+  sender      User                @relation(fields: [senderId], references: [id])
+  attachments MessageAttachment[]
 
   @@map("messages")
+}
+
+model MessageAttachment {
+  id        Int      @id @default(autoincrement())
+  messageId Int
+  objectKey String   @db.VarChar(500)
+  fileName  String   @db.VarChar(255)
+  mimeType  String   @db.VarChar(100)
+  fileSize  Int
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([messageId, sortOrder])
+  @@index([objectKey])
+  @@map("message_attachments")
 }

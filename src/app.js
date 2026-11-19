@@ -12,25 +12,29 @@ const UserRepository = require('./core/repositories/UserRepository');
 const ChatBoxRepository = require('./core/repositories/ChatBoxRepository');
 const MessageRepository = require('./core/repositories/MessageRepository');
 
-// Services
+// Services & Queues
 const AuthService = require('./core/services/AuthService');
 const UserService = require('./core/services/UserService');
 const MessageService = require('./core/services/MessageService');
+const StorageService = require('./core/services/StorageService');
+const MessageQueue = require('./core/queues/messageQueue');
 
 // Controllers
 const AuthController = require('./api/controllers/AuthController');
 const UserController = require('./api/controllers/UserController');
 const MessageController = require('./api/controllers/MessageController');
+const MediaController = require('./api/controllers/MediaController');
 
 // Routers
 const createAuthRouter = require('./api/routes/authRoutes');
 const createUserRouter = require('./api/routes/userRoutes');
 const createMessageRouter = require('./api/routes/messageRoutes');
+const createMediaRouter = require('./api/routes/mediaRoutes');
 
 // Middlewares
 const errorMiddleware = require('./api/middlewares/errorMiddleware');
 
-function createApp() {
+function createApp(options = {}) {
   const app = express();
 
   // Core Middlewares
@@ -39,17 +43,39 @@ function createApp() {
   app.use(express.urlencoded({ extended: true }));
 
   // Dependency Injection Setup
-  const userRepo = new UserRepository(prisma);
-  const chatBoxRepo = new ChatBoxRepository(prisma);
-  const messageRepo = new MessageRepository(prisma);
+  const dbClient = options.prisma || prisma;
+  const userRepo = new UserRepository(dbClient);
+  const chatBoxRepo = new ChatBoxRepository(dbClient);
+  const messageRepo = new MessageRepository(dbClient);
+
+  const storageService = options.storageService || new StorageService();
+
+  const enableQueue =
+    options.enableQueue !== undefined
+      ? Boolean(options.enableQueue)
+      : process.env.ENABLE_MESSAGE_QUEUE === 'true';
+
+  const messageQueue =
+    options.messageQueue !== undefined
+      ? options.messageQueue
+      : enableQueue
+        ? new MessageQueue(options.queueOptions || {})
+        : null;
 
   const authService = new AuthService(userRepo);
   const userService = new UserService(userRepo);
-  const messageService = new MessageService(chatBoxRepo, messageRepo, userRepo);
+  const messageService = new MessageService(
+    chatBoxRepo,
+    messageRepo,
+    userRepo,
+    storageService,
+    messageQueue
+  );
 
   const authController = new AuthController(authService);
   const userController = new UserController(userService);
   const messageController = new MessageController(messageService);
+  const mediaController = new MediaController(messageService);
 
   // Serve Swagger OpenAPI UI
   app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
@@ -61,6 +87,7 @@ function createApp() {
   app.use('/api/auth', createAuthRouter(authController));
   app.use('/api/users', createUserRouter(userController));
   app.use('/api/messages', createMessageRouter(messageController));
+  app.use('/api/media', createMediaRouter(mediaController));
 
   // Serve Web Client (Static Assets)
   const publicPath = path.join(__dirname, '../public');
@@ -73,7 +100,7 @@ function createApp() {
   // Global Error Handler
   app.use(errorMiddleware);
 
-  return { app, messageService };
+  return { app, messageService, storageService, messageQueue };
 }
 
 module.exports = createApp;

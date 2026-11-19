@@ -13,7 +13,8 @@ async function startServer() {
     await prisma.$connect();
     console.log('[Database] Connect MySQL Messenger DB successfully!');
 
-    const { app, messageService } = createApp();
+    const enableQueue = process.env.ENABLE_MESSAGE_QUEUE !== 'false';
+    const { app, messageService } = createApp({ enableQueue });
     const server = http.createServer(app);
 
     // Initialize Socket.IO with CORS

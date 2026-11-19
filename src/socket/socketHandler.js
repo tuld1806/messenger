@@ -4,7 +4,72 @@ const JWT_SECRET = process.env.JWT_SECRET || 'super_secret_messenger_key';
 // Map to store connected users: userId -> Set of socket.id
 const onlineUsers = new Map();
 
+// Phat su kien sau khi tin nhan da duoc luu thanh cong vao Database
+function broadcastPersistedMessage(io, persistedResult) {
+  if (!persistedResult || !persistedResult.chatBoxId) return;
+
+  const roomName = `chat_${persistedResult.chatBoxId}`;
+
+  // Phat su kien message_persisted toi tat ca thanh vien trong room
+  io.to(roomName).emit('message_persisted', persistedResult);
+
+  // Dam bao nguoi gui va nguoi nhan deu nhan duoc message_persisted ke ca khi chua join room
+  const roomSockets = io.sockets?.adapter?.rooms?.get(roomName) || new Set();
+  const targetUserIds = [persistedResult.senderId, persistedResult.recipientId].filter(Boolean);
+
+  for (const uid of targetUserIds) {
+    const numUid = parseInt(uid, 10);
+    if (onlineUsers.has(numUid)) {
+      onlineUsers.get(numUid).forEach((sockId) => {
+        if (!roomSockets.has(sockId)) {
+          io.to(sockId).emit('message_persisted', persistedResult);
+        }
+      });
+    }
+  }
+
+  // Giu nguyen su kien receive_message va conversation_updated cho giao dien real-time hien tai
+  io.to(roomName).emit('receive_message', persistedResult);
+
+  const recipientUid = persistedResult.recipientId ? parseInt(persistedResult.recipientId, 10) : null;
+  if (recipientUid && onlineUsers.has(recipientUid)) {
+    onlineUsers.get(recipientUid).forEach((recipientSocketId) => {
+      io.to(recipientSocketId).emit('conversation_updated', persistedResult);
+    });
+  }
+}
+
 function initSocket(io, messageService) {
+  let queueEventsWrapper = null;
+
+  // Neu messageService co gan MessageQueue, lang nghe su kien completed tu MessageWorker
+  if (
+    messageService &&
+    messageService.messageQueue &&
+    typeof messageService.messageQueue.createQueueEvents === 'function'
+  ) {
+    queueEventsWrapper = messageService.messageQueue.createQueueEvents();
+    const { queueEvents } = queueEventsWrapper;
+
+    queueEvents.on('completed', async ({ returnvalue }) => {
+      try {
+        const parsed =
+          typeof returnvalue === 'string' ? JSON.parse(returnvalue) : returnvalue;
+
+        if (!parsed || !parsed.message) return;
+
+        const hydratedResult =
+          typeof messageService.hydratePersistedResult === 'function'
+            ? await messageService.hydratePersistedResult(parsed)
+            : parsed;
+
+        broadcastPersistedMessage(io, hydratedResult);
+      } catch (err) {
+        console.error('[Socket.IO] Loi xu ly su kien message_persisted tu Worker:', err.message);
+      }
+    });
+  }
+
   // Authentication Middleware for Socket.IO
   io.use((socket, next) => {
     const token = socket.handshake.auth.token || socket.handshake.query.token;
@@ -75,28 +140,30 @@ function initSocket(io, messageService) {
     // Real-time message sending via Socket.IO
     socket.on('send_message', async (data, callback) => {
       try {
-        const { chatBoxId, targetUserId, content } = data;
+        const { chatBoxId, targetUserId, content, attachments, clientMessageId } = data || {};
         const result = await messageService.sendMessage({
           chatBoxId,
           targetUserId,
           senderId: socket.user.id,
           content,
+          attachments,
+          clientMessageId,
         });
 
-        const roomName = `chat_${result.chatBoxId}`;
+        if (result.status === 'queued') {
+          // Thong bao cho nguoi gui rang tin nhan da duoc dua vao Queue
+          socket.emit('message_queued', result);
 
-        // Broadcast to everyone in the room (including recipient)
-        io.to(roomName).emit('receive_message', result);
+          if (typeof callback === 'function') {
+            callback({ success: true, status: 'queued', data: result });
+          }
+        } else {
+          // Truong hop khong dung Queue (luu truc tiep)
+          broadcastPersistedMessage(io, result);
 
-        // Also check if recipient is online but hasn't joined room yet, notify them
-        if (onlineUsers.has(result.recipientId)) {
-          onlineUsers.get(result.recipientId).forEach((recipientSocketId) => {
-            io.to(recipientSocketId).emit('conversation_updated', result);
-          });
-        }
-
-        if (typeof callback === 'function') {
-          callback({ success: true, data: result });
+          if (typeof callback === 'function') {
+            callback({ success: true, status: 'persisted', data: result });
+          }
         }
       } catch (err) {
         console.error('[Socket.IO] Error sending message:', err.message);
@@ -125,6 +192,14 @@ function initSocket(io, messageService) {
       }
     });
   });
+
+  return {
+    closeQueueEvents: async () => {
+      if (queueEventsWrapper) {
+        await queueEventsWrapper.close();
+      }
+    },
+  };
 }
 
 function getOnlineUsers() {
@@ -134,4 +209,5 @@ function getOnlineUsers() {
 module.exports = {
   initSocket,
   getOnlineUsers,
+  broadcastPersistedMessage,
 };

@@ -50,17 +50,25 @@ class MessageController {
 
   sendMessage = async (req, res, next) => {
     try {
-      const { chatBoxId, targetUserId, content } = req.body;
+      const { chatBoxId, targetUserId, content, attachments, clientMessageId } = req.body || {};
       const result = await this.messageService.sendMessage({
         chatBoxId,
         targetUserId,
         senderId: req.user.id,
         content,
+        attachments,
+        clientMessageId,
       });
 
-      return res.status(201).json({
+      const statusCode = result.status === 'queued' ? 202 : 201;
+      const responseMessage =
+        result.status === 'queued'
+          ? 'Tin nhắn đã được tiếp nhận vào hàng đợi xử lý.'
+          : 'Gửi tin nhắn thành công.';
+
+      return res.status(statusCode).json({
         success: true,
-        message: 'Gửi tin nhắn thành công.',
+        message: responseMessage,
         data: result,
       });
     } catch (error) {
